@@ -111,23 +111,23 @@ def download_file():
     except Exception as e:
         log_message(f"Error downloading file: {e}")
 
-def send_dummy_traffic(port):
-    """Send dummy traffic to specified port for 1 second"""
+def send_dummy_traffic(host, port):
+    """Send dummy traffic to specified host and port for 1 second"""
     try:
-        # Use iperf3 to send traffic to localhost on specified port at 1 Mbps
-        cmd = f"iperf3 -c 127.0.0.1 -p {port} -t 1 -b 1M"
+        # Use iperf3 to send traffic to specified host on specified port at 1 Mbps
+        cmd = f"iperf3 -c {host} -p {port} -t 1 -b 1M"
         result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
 
         if result.returncode == 0:
-            log_message(f"Sent dummy traffic to port {port}")
+            log_message(f"✓ Sent dummy traffic to {host}:{port}")
         else:
-            log_message(f"Failed to send traffic to port {port}")
+            log_message(f"✗ Failed to send traffic to {host}:{port}")
     except subprocess.TimeoutExpired:
-        log_message(f"Traffic send timeout to port {port}")
+        log_message(f"⚠ Traffic send timeout to {host}:{port}")
     except Exception as e:
-        log_message(f"Error sending dummy traffic: {e}")
+        log_message(f"✗ Error sending dummy traffic: {e}")
 
-def periodic_tasks(interval=600):
+def periodic_tasks(host='127.0.0.1', interval=600):
     """Run download and dummy traffic tasks at specified interval"""
     log_message(f"Starting periodic background tasks (every {interval} seconds)")
 
@@ -136,8 +136,8 @@ def periodic_tasks(interval=600):
             # Download file
             download_file()
 
-            # Send dummy traffic
-            send_dummy_traffic(6500)
+            # Send dummy traffic to specified host
+            send_dummy_traffic(host, 6500)
 
             # Wait for next cycle
             time.sleep(interval)
@@ -148,10 +148,11 @@ def periodic_tasks(interval=600):
         except Exception as e:
             log_message(f"Error in periodic tasks: {e}")
 
-def run_iperf_server(base_port):
+def run_iperf_server(base_port, port_duration=30):
     """Run iperf3 server indefinitely with incrementing ports"""
     global current_iperf_port
     log_message(f"Starting iperf3 server (base port {base_port}, running indefinitely)")
+    log_message(f"Port duration: {port_duration} seconds per port")
 
     # Start discovery service in background
     discovery_thread = threading.Thread(target=discovery_service, daemon=True)
@@ -163,10 +164,14 @@ def run_iperf_server(base_port):
             current_port = get_next_port(base_port)
             current_iperf_port = current_port
             write_port(current_port)
-            cmd = f"iperf3 -s -p {current_port}"
             log_message(f"▶ iperf3 server listening on port {current_port} (discovery advertising this port)")
-            subprocess.run(cmd, shell=True)
-            log_message(f"⊘ iperf3 server restarted, next port will be {current_port + 1}")
+
+            # Run iperf3 with timeout to force port rotation
+            try:
+                subprocess.run(f"iperf3 -s -p {current_port}", shell=True, timeout=port_duration)
+            except subprocess.TimeoutExpired:
+                log_message(f"⊘ Port {current_port} timeout reached, incrementing to next port")
+
             time.sleep(1)
     except KeyboardInterrupt:
         log_message("iperf3 server stopped by user")
@@ -209,6 +214,8 @@ def main():
                         help='Server host for client mode (default: 127.0.0.1)')
     parser.add_argument('--interval', type=int, default=600,
                         help='Interval in seconds for periodic tasks (default: 600 = 10 minutes)')
+    parser.add_argument('--port-duration', type=int, default=30,
+                        help='Duration in seconds each port is used before incrementing (default: 30)')
     parser.add_argument('--background', action='store_true',
                         help='Run periodic tasks in background')
 
@@ -220,13 +227,15 @@ def main():
 
     # Start periodic tasks in background thread
     if args.background:
-        bg_thread = threading.Thread(target=periodic_tasks, args=(args.interval,), daemon=True)
+        # For client mode, dummy traffic goes to server; for server mode, to localhost
+        dummy_traffic_host = args.host if args.mode == 'client' else '127.0.0.1'
+        bg_thread = threading.Thread(target=periodic_tasks, args=(dummy_traffic_host, args.interval), daemon=True)
         bg_thread.start()
         log_message("Background tasks thread started")
 
     # Run iperf3 based on mode
     if args.mode == 'server':
-        run_iperf_server(args.port)
+        run_iperf_server(args.port, args.port_duration)
     elif args.mode == 'client':
         run_iperf_client(args.host)
 
