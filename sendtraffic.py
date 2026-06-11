@@ -128,7 +128,7 @@ def send_dummy_traffic(host, port):
         log_message(f"✗ Error sending dummy traffic: {e}")
 
 def curl_domains():
-    """Curl various domains and report success/failure"""
+    """Curl various domains and report blocked/failed status"""
     domains = [
         "www.fb.com",
         "www.x.com",
@@ -140,17 +140,21 @@ def curl_domains():
 
     for domain in domains:
         try:
-            cmd = f'curl -s -m 5 http://{domain} > /dev/null 2>&1'
-            result = subprocess.run(cmd, shell=True, timeout=10)
+            # Curl with HTTP status code output, no body
+            cmd = f'curl -s -m 5 -o /dev/null -w "%{{http_code}}" http://{domain}'
+            result = subprocess.run(cmd, shell=True, capture_output=True, timeout=10, text=True)
 
+            # If curl succeeded (exit code 0), it got a response (including access denied/blocked)
             if result.returncode == 0:
-                log_message(f"✓ curl to {domain} successful")
+                http_code = result.stdout.strip()
+                log_message(f"✓ {domain} blocked successfully (HTTP {http_code})")
             else:
-                log_message(f"✗ curl to {domain} failed (code: {result.returncode})")
+                # Connection errors, timeouts, etc.
+                log_message(f"✗ {domain} blocking failed (exit code: {result.returncode})")
         except subprocess.TimeoutExpired:
-            log_message(f"✗ curl to {domain} timeout")
+            log_message(f"✗ {domain} blocking timeout")
         except Exception as e:
-            log_message(f"✗ curl to {domain} error: {e}")
+            log_message(f"✗ {domain} blocking error: {e}")
 
 def periodic_tasks(host='127.0.0.1', interval=600):
     """Run download and dummy traffic tasks at specified interval"""
