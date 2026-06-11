@@ -142,11 +142,11 @@ def curl_domains():
         try:
             # Curl with HTTP status code output, no body
             cmd = f'curl -s -m 5 -o /dev/null -w "%{{http_code}}" http://{domain}'
-            result = subprocess.run(cmd, shell=True, capture_output=True, timeout=10, text=True)
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
 
             # If curl succeeded (exit code 0), it got a response (including access denied/blocked)
             if result.returncode == 0:
-                http_code = result.stdout.strip()
+                http_code = result.stdout.decode().strip()
                 log_message(f"✓ {domain} blocked successfully (HTTP {http_code})")
             else:
                 # Connection errors, timeouts, etc.
