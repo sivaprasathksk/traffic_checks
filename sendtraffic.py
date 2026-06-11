@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+import argparse
+import subprocess
+import threading
+import time
+import os
+import sys
+import socket
+
+PORT_FILE = "/tmp/iperf3_port.txt"
+DISCOVERY_PORT = 9999
+current_iperf_port = None
+
+def log_message(msg):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {msg}", flush=True)
+
+def write_port(port):
+    """Write current port to shared file"""
+    try:
+        with open(PORT_FILE, 'w') as f:
+            f.write(str(port))
+    except Exception as e:
+        log_message(f"Error writing port to file: {e}")
+
+def read_port():
+    """Read port from shared file"""
+    try:
+        if os.path.exists(PORT_FILE):
+            with open(PORT_FILE, 'r') as f:
+                return int(f.read().strip())
+    except Exception as e:
+        log_message(f"Error reading port from file: {e}")
+    return None
+
+def get_next_port(base_port):
+    """Get next port number by incrementing from base"""
+    current = read_port()
+    if current is None:
+        return base_port
+    return current + 1
+
+def discovery_service():
+    """Run discovery service that reports current iperf3 port to clients"""
+    global current_iperf_port
+    try:
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_sock.bind(('0.0.0.0', DISCOVERY_PORT))
+        server_sock.listen(5)
+        log_message(f"Discovery service listening on port {DISCOVERY_PORT}")
+
+        while True:
+            try:
+                client_sock, addr = server_sock.accept()
+                if current_iperf_port:
+                    client_sock.sendall(str(current_iperf_port).encode())
+                    log_message(f"Discovery: Sent iperf3 port {current_iperf_port} to {addr[0]}")
+                client_sock.close()
+            except Exception as e:
+                log_message(f"Discovery service error: {e}")
+                time.sleep(1)
+    except Exception as e:
+        log_message(f"Failed to start discovery service: {e}")
+
+def get_server_port(host, timeout=5):
+    """Query discovery service to get current iperf3 port"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, DISCOVERY_PORT))
+        port_data = sock.recv(1024).decode().strip()
+        sock.close()
+        if port_data:
+            return int(port_data)
+    except Exception as e:
+        log_message(f"Error querying discovery service: {e}")
+    return None
+
+def download_file():
+    """Download file from URL and delete existing one first"""
+    url = "http://testmynids.org/exe/calc.exe"
+    tmp_file = "/tmp/calc.exe"
+
+    try:
+        # Delete existing file if present
+        if os.path.exists(tmp_file):
+            os.remove(tmp_file)
+            log_message(f"Deleted existing {tmp_file}")
+
+        # Download the file
+        cmd = f'curl -s {url} -o {tmp_file}'
+        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+
+        if result.returncode == 0 and os.path.exists(tmp_file):
+            log_message(f"Successfully downloaded {url} to {tmp_file}")
+        else:
+            log_message(f"Failed to download {url}")
+    except subprocess.TimeoutExpired:
+        log_message(f"Download timeout for {url}")
+    except Exception as e:
+        log_message(f"Error downloading file: {e}")
+
+def send_dummy_traffic(port):
+    """Send dummy traffic to specified port for 1 second"""
+    try:
+        # Use iperf3 to send traffic to localhost on specified port at 1 Mbps
+        cmd = f"iperf3 -c 127.0.0.1 -p {port} -t 1 -b 1M"
+        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+
+        if result.returncode == 0:
+            log_message(f"Sent dummy traffic to port {port}")
+        else:
+            log_message(f"Failed to send traffic to port {port}")
+    except subprocess.TimeoutExpired:
+        log_message(f"Traffic send timeout to port {port}")
+    except Exception as e:
+        log_message(f"Error sending dummy traffic: {e}")
+
+def periodic_tasks(interval=600):
+    """Run download and dummy traffic tasks at specified interval"""
+    log_message(f"Starting periodic background tasks (every {interval} seconds)")
+
+    while True:
+        try:
+            # Download file
+            download_file()
+
+            # Send dummy traffic
+            send_dummy_traffic(6500)
+
+            # Wait for next cycle
+            time.sleep(interval)
+
+        except KeyboardInterrupt:
+            log_message("Periodic tasks interrupted")
+            break
+        except Exception as e:
+            log_message(f"Error in periodic tasks: {e}")
+
+def run_iperf_server(base_port):
+    """Run iperf3 server indefinitely with incrementing ports"""
+    global current_iperf_port
+    log_message(f"Starting iperf3 server (base port {base_port}, running indefinitely)")
+
+    # Start discovery service in background
+    discovery_thread = threading.Thread(target=discovery_service, daemon=True)
+    discovery_thread.start()
+
+    try:
+        while True:
+            current_port = get_next_port(base_port)
+            current_iperf_port = current_port
+            write_port(current_port)
+            cmd = f"iperf3 -s -p {current_port}"
+            log_message(f"iperf3 server listening on port {current_port}")
+            subprocess.run(cmd, shell=True)
+            log_message(f"iperf3 server restarted, next port will be {current_port + 1}")
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log_message("iperf3 server stopped")
+    except Exception as e:
+        log_message(f"Error running iperf3 server: {e}")
+
+def run_iperf_client(host):
+    """Run iperf3 client indefinitely, syncing port from server discovery service"""
+    log_message(f"Starting iperf3 client connecting to {host} at 1 Mbps (running indefinitely)")
+    try:
+        while True:
+            # Query server discovery service for current port
+            current_port = get_server_port(host, timeout=5)
+            if current_port is None:
+                log_message(f"Waiting for server discovery service on {host}:{DISCOVERY_PORT}...")
+                time.sleep(2)
+                continue
+
+            cmd = f"iperf3 -c {host} -p {current_port} -b 1M"
+            log_message(f"iperf3 client connecting to {host}:{current_port}")
+            subprocess.run(cmd, shell=True, timeout=120)
+            log_message(f"iperf3 client session ended, waiting for next port...")
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log_message("iperf3 client stopped")
+    except Exception as e:
+        log_message(f"Error running iperf3 client: {e}")
+
+def main():
+    parser = argparse.ArgumentParser(description='Traffic generator with iperf3 and periodic downloads')
+    parser.add_argument('--mode', type=str, choices=['server', 'client'], required=True,
+                        help='iperf3 mode: server or client')
+    parser.add_argument('--port', type=int, default=5201,
+                        help='Port for iperf3 (default: 5201)')
+    parser.add_argument('--host', type=str, default='127.0.0.1',
+                        help='Server host for client mode (default: 127.0.0.1)')
+    parser.add_argument('--interval', type=int, default=600,
+                        help='Interval in seconds for periodic tasks (default: 600 = 10 minutes)')
+    parser.add_argument('--background', action='store_true',
+                        help='Run periodic tasks in background')
+
+    args = parser.parse_args()
+
+    # Check if running as root (for Linux/Unix)
+    if sys.platform != 'win32' and os.getuid() != 0:
+        log_message("Warning: This script should ideally be run as root for network operations")
+
+    # Start periodic tasks in background thread
+    if args.background:
+        bg_thread = threading.Thread(target=periodic_tasks, args=(args.interval,), daemon=True)
+        bg_thread.start()
+        log_message("Background tasks thread started")
+
+    # Run iperf3 based on mode
+    if args.mode == 'server':
+        run_iperf_server(args.port)
+    elif args.mode == 'client':
+        run_iperf_client(args.host)
+
+if __name__ == '__main__':
+    main()
