@@ -48,33 +48,43 @@ def discovery_service():
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_sock.bind(('0.0.0.0', DISCOVERY_PORT))
         server_sock.listen(5)
-        log_message(f"Discovery service listening on port {DISCOVERY_PORT}")
+        log_message(f"✓ Discovery service listening on port {DISCOVERY_PORT}")
 
         while True:
             try:
                 client_sock, addr = server_sock.accept()
                 if current_iperf_port:
-                    client_sock.sendall(str(current_iperf_port).encode())
-                    log_message(f"Discovery: Sent iperf3 port {current_iperf_port} to {addr[0]}")
+                    response = str(current_iperf_port).encode()
+                    client_sock.sendall(response)
+                    log_message(f"✓ Discovery: Sent iperf3 port {current_iperf_port} to {addr[0]}:{addr[1]}")
+                else:
+                    log_message(f"⚠ Discovery request from {addr[0]} but iperf3 port not ready yet")
                 client_sock.close()
             except Exception as e:
-                log_message(f"Discovery service error: {e}")
+                log_message(f"⚠ Discovery service error: {e}")
                 time.sleep(1)
     except Exception as e:
-        log_message(f"Failed to start discovery service: {e}")
+        log_message(f"✗ Failed to start discovery service on port {DISCOVERY_PORT}: {e}")
+        time.sleep(5)
 
 def get_server_port(host, timeout=5):
     """Query discovery service to get current iperf3 port"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
+        log_message(f"Querying discovery service at {host}:{DISCOVERY_PORT}...")
         sock.connect((host, DISCOVERY_PORT))
         port_data = sock.recv(1024).decode().strip()
         sock.close()
         if port_data:
+            log_message(f"✓ Discovery returned port: {port_data}")
             return int(port_data)
+    except socket.timeout:
+        log_message(f"✗ Discovery service timeout on {host}:{DISCOVERY_PORT} - server may not be running")
+    except ConnectionRefusedError:
+        log_message(f"✗ Connection refused on {host}:{DISCOVERY_PORT} - check server is running and firewall allows port")
     except Exception as e:
-        log_message(f"Error querying discovery service: {e}")
+        log_message(f"✗ Error querying discovery service: {e}")
     return None
 
 def download_file():
@@ -146,6 +156,7 @@ def run_iperf_server(base_port):
     # Start discovery service in background
     discovery_thread = threading.Thread(target=discovery_service, daemon=True)
     discovery_thread.start()
+    time.sleep(1)  # Give discovery service time to start
 
     try:
         while True:
@@ -153,36 +164,40 @@ def run_iperf_server(base_port):
             current_iperf_port = current_port
             write_port(current_port)
             cmd = f"iperf3 -s -p {current_port}"
-            log_message(f"iperf3 server listening on port {current_port}")
+            log_message(f"▶ iperf3 server listening on port {current_port} (discovery advertising this port)")
             subprocess.run(cmd, shell=True)
-            log_message(f"iperf3 server restarted, next port will be {current_port + 1}")
+            log_message(f"⊘ iperf3 server restarted, next port will be {current_port + 1}")
             time.sleep(1)
     except KeyboardInterrupt:
-        log_message("iperf3 server stopped")
+        log_message("iperf3 server stopped by user")
     except Exception as e:
-        log_message(f"Error running iperf3 server: {e}")
+        log_message(f"✗ Error running iperf3 server: {e}")
 
 def run_iperf_client(host):
     """Run iperf3 client indefinitely, syncing port from server discovery service"""
     log_message(f"Starting iperf3 client connecting to {host} at 1 Mbps (running indefinitely)")
+    log_message(f"Connecting to server discovery service at {host}:{DISCOVERY_PORT}")
+    retry_count = 0
     try:
         while True:
             # Query server discovery service for current port
             current_port = get_server_port(host, timeout=5)
             if current_port is None:
-                log_message(f"Waiting for server discovery service on {host}:{DISCOVERY_PORT}...")
-                time.sleep(2)
+                retry_count += 1
+                log_message(f"Retry {retry_count}: Waiting {3} seconds before next attempt...")
+                time.sleep(3)
                 continue
 
+            retry_count = 0  # Reset on successful connection
             cmd = f"iperf3 -c {host} -p {current_port} -b 1M"
-            log_message(f"iperf3 client connecting to {host}:{current_port}")
+            log_message(f"▶ iperf3 client connecting to {host}:{current_port}")
             subprocess.run(cmd, shell=True, timeout=120)
-            log_message(f"iperf3 client session ended, waiting for next port...")
-            time.sleep(1)
+            log_message(f"⊘ iperf3 client session ended, waiting for next port...")
+            time.sleep(2)
     except KeyboardInterrupt:
-        log_message("iperf3 client stopped")
+        log_message("iperf3 client stopped by user")
     except Exception as e:
-        log_message(f"Error running iperf3 client: {e}")
+        log_message(f"✗ Error running iperf3 client: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description='Traffic generator with iperf3 and periodic downloads')
