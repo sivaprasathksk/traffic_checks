@@ -127,6 +127,31 @@ def send_dummy_traffic(host, port):
     except Exception as e:
         log_message(f"✗ Error sending dummy traffic: {e}")
 
+def curl_domains():
+    """Curl various domains and report success/failure"""
+    domains = [
+        "www.fb.com",
+        "www.x.com",
+        "www.instagram.com",
+        "www.pinterest.com",
+        "www.reddit.com",
+        "www.snapchat.com"
+    ]
+
+    for domain in domains:
+        try:
+            cmd = f'curl -s -m 5 http://{domain} > /dev/null 2>&1'
+            result = subprocess.run(cmd, shell=True, timeout=10)
+
+            if result.returncode == 0:
+                log_message(f"✓ curl to {domain} successful")
+            else:
+                log_message(f"✗ curl to {domain} failed (code: {result.returncode})")
+        except subprocess.TimeoutExpired:
+            log_message(f"✗ curl to {domain} timeout")
+        except Exception as e:
+            log_message(f"✗ curl to {domain} error: {e}")
+
 def periodic_tasks(host='127.0.0.1', interval=600):
     """Run download and dummy traffic tasks at specified interval"""
     log_message(f"Starting periodic background tasks (every {interval} seconds)")
@@ -138,6 +163,9 @@ def periodic_tasks(host='127.0.0.1', interval=600):
 
             # Send dummy traffic to specified host
             send_dummy_traffic(host, 6500)
+
+            # Curl domains
+            curl_domains()
 
             # Wait for next cycle
             time.sleep(interval)
