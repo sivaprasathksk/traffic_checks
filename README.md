@@ -82,7 +82,8 @@ positional arguments:
   --mode {server,client}     iperf3 mode: server or client (required)
 
 optional arguments:
-  --port PORT               Port for iperf3 base port (default: 5201)
+  --port PORT               Base port for iperf3 (default: 5201)
+  --max-port PORT           Maximum port before cycling back to base port (optional)
   --host HOST               Server host for client mode (default: 127.0.0.1)
   --interval INTERVAL       Interval in seconds for periodic tasks (default: 600 = 10 minutes)
   --port-duration DURATION  Duration in seconds each port is used before incrementing (default: 30)
@@ -124,6 +125,19 @@ sudo python3 sendtraffic.py --mode server --port 5201 --port-duration 120 --inte
 # Client: Periodic tasks every 5 minutes
 sudo python3 sendtraffic.py --mode client --host 192.168.1.100 --interval 300 --background
 ```
+
+### Scenario 4: Port Range with Cycling
+
+```bash
+# Server: Use ports 4000-5000, cycle back when max reached (each port for 30 seconds)
+sudo python3 sendtraffic.py --mode server --port 4000 --max-port 5000 --port-duration 30 --background
+
+# Client: Auto-sync to cycling ports
+sudo python3 sendtraffic.py --mode client --host 192.168.1.100 --background
+```
+
+**Port sequence:** 4000 → 4001 → 4002 → ... → 5000 → 4000 → 4001 → ...
+
 
 ## Periodic Tasks (Every Interval)
 
@@ -172,10 +186,34 @@ Failure: Connection errors or timeouts
 
 ## Port Rotation
 
-Ports automatically increment at the specified interval:
+Ports automatically increment at the specified interval and cycle back to the base port when max is reached:
 
+### Without Port Range (Infinite Increment)
 ```
-Port: 5201 → [30 seconds] → 5202 → [30 seconds] → 5203 → [30 seconds] → 5204...
+Port: 5201 → [30s] → 5202 → [30s] → 5203 → [30s] → 5204 → ...
+```
+
+**Usage:**
+```bash
+sudo python3 sendtraffic.py --mode server --port 5201 --background
+```
+
+### With Port Range (Cycles Back)
+```
+Port: 4000 → [30s] → 4001 → [30s] → 4002 → [30s] → 5000 → [cycles back] → 4000 → [30s] → 4001...
+```
+
+**Usage (port range 4000-5000):**
+```bash
+sudo python3 sendtraffic.py --mode server --port 4000 --max-port 5000 --background
+```
+
+**Output when cycling:**
+```
+▶ iperf3 server listening on port 5000 (discovery advertising this port)
+⊘ Port 5000 timeout reached, moving to next port
+Port range 4000-5000 completed, cycling back to 4000
+▶ iperf3 server listening on port 4000 (discovery advertising this port)
 ```
 
 **Change Port Duration:**
@@ -185,6 +223,9 @@ sudo python3 sendtraffic.py --mode server --port 5201 --port-duration 60 --backg
 
 # Use each port for 10 seconds
 sudo python3 sendtraffic.py --mode server --port 5201 --port-duration 10 --background
+
+# Port range 4000-5000, each for 45 seconds
+sudo python3 sendtraffic.py --mode server --port 4000 --max-port 5000 --port-duration 45 --background
 ```
 
 ## Port Synchronization

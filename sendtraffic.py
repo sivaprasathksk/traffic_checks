@@ -33,12 +33,20 @@ def read_port():
         log_message(f"Error reading port from file: {e}")
     return None
 
-def get_next_port(base_port):
-    """Get next port number by incrementing from base"""
+def get_next_port(base_port, max_port=None):
+    """Get next port number by incrementing from base, cycling back when max is reached"""
     current = read_port()
     if current is None:
         return base_port
-    return current + 1
+
+    next_port = current + 1
+
+    # If max_port is set and we exceed it, cycle back to base_port
+    if max_port and next_port > max_port:
+        log_message(f"Port range {base_port}-{max_port} completed, cycling back to {base_port}")
+        return base_port
+
+    return next_port
 
 def discovery_service():
     """Run discovery service that reports current iperf3 port to clients"""
@@ -180,10 +188,12 @@ def periodic_tasks(host='127.0.0.1', interval=600):
         except Exception as e:
             log_message(f"Error in periodic tasks: {e}")
 
-def run_iperf_server(base_port, port_duration=30):
-    """Run iperf3 server indefinitely with incrementing ports"""
+def run_iperf_server(base_port, max_port=None, port_duration=30):
+    """Run iperf3 server indefinitely with incrementing ports (cycles back to base_port when max reached)"""
     global current_iperf_port
     log_message(f"Starting iperf3 server (base port {base_port}, running indefinitely)")
+    if max_port:
+        log_message(f"Port range: {base_port}-{max_port} (will cycle back after reaching max)")
     log_message(f"Port duration: {port_duration} seconds per port")
 
     # Start discovery service in background
@@ -193,7 +203,7 @@ def run_iperf_server(base_port, port_duration=30):
 
     try:
         while True:
-            current_port = get_next_port(base_port)
+            current_port = get_next_port(base_port, max_port)
             current_iperf_port = current_port
             write_port(current_port)
             log_message(f"▶ iperf3 server listening on port {current_port} (discovery advertising this port)")
@@ -202,7 +212,7 @@ def run_iperf_server(base_port, port_duration=30):
             try:
                 subprocess.run(f"iperf3 -s -p {current_port}", shell=True, timeout=port_duration)
             except subprocess.TimeoutExpired:
-                log_message(f"⊘ Port {current_port} timeout reached, incrementing to next port")
+                log_message(f"⊘ Port {current_port} timeout reached, moving to next port")
 
             time.sleep(1)
     except KeyboardInterrupt:
@@ -241,7 +251,9 @@ def main():
     parser.add_argument('--mode', type=str, choices=['server', 'client'], required=True,
                         help='iperf3 mode: server or client')
     parser.add_argument('--port', type=int, default=5201,
-                        help='Port for iperf3 (default: 5201)')
+                        help='Base port for iperf3 (default: 5201)')
+    parser.add_argument('--max-port', type=int, default=None,
+                        help='Maximum port before cycling back to base port (optional)')
     parser.add_argument('--host', type=str, default='127.0.0.1',
                         help='Server host for client mode (default: 127.0.0.1)')
     parser.add_argument('--interval', type=int, default=600,
@@ -267,7 +279,7 @@ def main():
 
     # Run iperf3 based on mode
     if args.mode == 'server':
-        run_iperf_server(args.port, args.port_duration)
+        run_iperf_server(args.port, args.max_port, args.port_duration)
     elif args.mode == 'client':
         run_iperf_client(args.host)
 
