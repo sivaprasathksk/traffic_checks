@@ -201,6 +201,7 @@ def run_iperf_server(base_port, max_port=None, port_duration=30):
     discovery_thread.start()
     time.sleep(1)  # Give discovery service time to start
 
+    process = None
     try:
         while True:
             current_port = get_next_port(base_port, max_port)
@@ -210,21 +211,36 @@ def run_iperf_server(base_port, max_port=None, port_duration=30):
 
             # Run iperf3 with timeout to force port rotation
             try:
-                subprocess.run(f"iperf3 -s -p {current_port}", shell=True, timeout=port_duration)
+                process = subprocess.Popen(f"iperf3 -s -p {current_port}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                process.wait(timeout=port_duration)
             except subprocess.TimeoutExpired:
+                process.kill()
                 log_message(f"⊘ Port {current_port} timeout reached, moving to next port")
 
             time.sleep(1)
     except KeyboardInterrupt:
         log_message("iperf3 server stopped by user")
+        if process:
+            try:
+                process.kill()
+                process.wait()
+            except:
+                pass
     except Exception as e:
         log_message(f"✗ Error running iperf3 server: {e}")
+        if process:
+            try:
+                process.kill()
+            except:
+                pass
 
 def run_iperf_client(host):
     """Run iperf3 client indefinitely, syncing port from server discovery service"""
     log_message(f"Starting iperf3 client connecting to {host} at 1 Mbps (running indefinitely)")
     log_message(f"Connecting to server discovery service at {host}:{DISCOVERY_PORT}")
     retry_count = 0
+    process = None
+
     try:
         while True:
             # Query server discovery service for current port
@@ -238,13 +254,31 @@ def run_iperf_client(host):
             retry_count = 0  # Reset on successful connection
             cmd = f"iperf3 -c {host} -p {current_port} -b 1M"
             log_message(f"▶ iperf3 client connecting to {host}:{current_port}")
-            subprocess.run(cmd, shell=True, timeout=120)
+
+            # Run iperf3 and suppress error output
+            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                process.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
             log_message(f"⊘ iperf3 client session ended, waiting for next port...")
             time.sleep(2)
     except KeyboardInterrupt:
         log_message("iperf3 client stopped by user")
+        if process:
+            try:
+                process.kill()
+                process.wait()
+            except:
+                pass
     except Exception as e:
         log_message(f"✗ Error running iperf3 client: {e}")
+        if process:
+            try:
+                process.kill()
+            except:
+                pass
 
 def main():
     parser = argparse.ArgumentParser(description='Traffic generator with iperf3 and periodic downloads')
