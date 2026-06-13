@@ -64,6 +64,13 @@ def read_port():
         log_message(f"Error reading port from file: {e}")
     return None
 
+def reset_port(base_port):
+    """Reset port file to base port"""
+    try:
+        write_port(base_port)
+    except Exception as e:
+        log_message(f"Could not reset port file: {e}")
+
 def get_next_port(base_port, max_port=None):
     """Get next port number by incrementing from base, cycling back when max is reached"""
     current = read_port()
@@ -226,6 +233,10 @@ def run_iperf_server(base_port, max_port=None, port_duration=30):
     if max_port:
         log_message(f"Port range: {base_port}-{max_port} (will cycle back after reaching max)")
     log_message(f"Port duration: {port_duration} seconds per port")
+
+    # Reset port file to base port on startup
+    log_message(f"Resetting port to base port {base_port}")
+    reset_port(base_port)
 
     # Clean up any existing process on discovery port
     log_message(f"Cleaning up discovery port {DISCOVERY_PORT}...")
