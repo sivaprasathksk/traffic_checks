@@ -247,10 +247,17 @@ def run_iperf_server(base_port, max_port=None, port_duration=30):
             # Run iperf3 with timeout to force port rotation
             try:
                 process = subprocess.Popen(f"iperf3 -s -p {current_port}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                process.wait(timeout=port_duration)
+                _, stderr = process.communicate(timeout=port_duration)
+                if process.returncode == 0:
+                    log_message(f"✓ iperf3 server on port {current_port} completed")
+                else:
+                    error_msg = stderr.decode('utf-8', errors='ignore').strip()
+                    if error_msg and 'Accepted connection' not in error_msg:
+                        log_message(f"⚠ Server port {current_port}: {error_msg[:150]}")
             except subprocess.TimeoutExpired:
                 process.kill()
                 log_message(f"⊘ Port {current_port} timeout reached, moving to next port")
+                process.communicate()
 
             time.sleep(1)
     except KeyboardInterrupt:
@@ -290,12 +297,21 @@ def run_iperf_client(host):
             cmd = f"iperf3 -c {host} -p {current_port} -b 1M"
             log_message(f"▶ iperf3 client connecting to {host}:{current_port}")
 
-            # Run iperf3 and suppress error output
+            # Run iperf3 with output capture for debugging
             process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
-                process.wait(timeout=120)
+                _, stderr = process.communicate(timeout=120)
+                if process.returncode == 0:
+                    log_message(f"✓ iperf3 client session completed successfully on port {current_port}")
+                else:
+                    error_msg = stderr.decode('utf-8', errors='ignore').strip()
+                    log_message(f"✗ iperf3 client failed on port {current_port} (code: {process.returncode})")
+                    if error_msg:
+                        log_message(f"  Error: {error_msg[:200]}")
             except subprocess.TimeoutExpired:
                 process.kill()
+                log_message(f"✗ iperf3 client timeout on port {current_port}")
+                process.communicate()
 
             log_message(f"⊘ iperf3 client session ended, waiting for next port...")
             time.sleep(2)
