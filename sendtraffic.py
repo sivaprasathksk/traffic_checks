@@ -11,6 +11,37 @@ PORT_FILE = "/tmp/iperf3_port.txt"
 DISCOVERY_PORT = 9999
 current_iperf_port = None
 
+def cleanup_discovery_port():
+    """Kill any existing process on discovery port 9999"""
+    try:
+        if sys.platform == 'win32':
+            # Windows: Use taskkill
+            cmd = f'netstat -ano | findstr :{DISCOVERY_PORT}'
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                output = result.stdout.decode().strip()
+                if output:
+                    # Extract PID from netstat output
+                    parts = output.split()
+                    if len(parts) > 0:
+                        pid = parts[-1]
+                        subprocess.run(f'taskkill /PID {pid} /F', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        log_message(f"Killed existing process on port {DISCOVERY_PORT} (PID: {pid})")
+        else:
+            # Linux/macOS: Use lsof
+            cmd = f'lsof -i :{DISCOVERY_PORT} -t'
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                pids = result.stdout.decode().strip().split('\n')
+                for pid in pids:
+                    if pid:
+                        subprocess.run(f'kill -9 {pid}', shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        log_message(f"Killed existing process on port {DISCOVERY_PORT} (PID: {pid})")
+    except Exception as e:
+        log_message(f"⚠ Could not cleanup discovery port: {e}")
+
+    time.sleep(0.5)  # Brief pause for port to be released
+
 def log_message(msg):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {msg}", flush=True)
@@ -195,6 +226,10 @@ def run_iperf_server(base_port, max_port=None, port_duration=30):
     if max_port:
         log_message(f"Port range: {base_port}-{max_port} (will cycle back after reaching max)")
     log_message(f"Port duration: {port_duration} seconds per port")
+
+    # Clean up any existing process on discovery port
+    log_message(f"Cleaning up discovery port {DISCOVERY_PORT}...")
+    cleanup_discovery_port()
 
     # Start discovery service in background
     discovery_thread = threading.Thread(target=discovery_service, daemon=True)
